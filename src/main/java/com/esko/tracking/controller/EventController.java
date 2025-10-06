@@ -4,26 +4,27 @@ import com.esko.tracking.model.Event;
 import com.esko.tracking.repository.EventRepository;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
 @RestController
 @RequestMapping("/api/events")
 @CrossOrigin(origins = "*")
 public class EventController {
 
-    private final EventRepository repo;
+    private final EventRepository eventRepository;
 
-    public EventController(EventRepository repo) {
-        this.repo = repo;
+    public EventController(EventRepository eventRepository) {
+        this.eventRepository = eventRepository;
     }
 
     @PostMapping
-    public Event saveEvent(@RequestBody Event event) {
-        return repo.save(event);
+    public Event createEvent(@RequestBody Event event) {
+        if (event.getTimestamp() == null) {
+            event.setTimestamp(java.time.LocalDateTime.now());
+        }
+        return eventRepository.save(event);
     }
 
     @GetMapping
-    public List<Event> getEvents() {
-        return repo.findAll();
+    public java.util.List<Event> getAll() {
+        return eventRepository.findAll();
     }
 }

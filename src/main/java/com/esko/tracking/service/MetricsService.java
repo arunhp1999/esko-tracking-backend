@@ -5,6 +5,10 @@ import com.esko.tracking.model.Event;
 import com.esko.tracking.repository.EventRepository;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -17,50 +21,52 @@ public class MetricsService {
         this.eventRepository = eventRepository;
     }
 
-    /**
-     * Fetch events for product and optional time window, then compute metrics.
-     * startMillis/endMillis can be null to fetch all for product.
-     */
     public MetricsSummary computeSummary(String product, Long startMillis, Long endMillis) {
         List<Event> events;
+
         if (startMillis != null && endMillis != null) {
-            events = eventRepository.findByProductAndTimestampBetween(product, startMillis, endMillis);
+            LocalDateTime startTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(startMillis), ZoneOffset.UTC);
+            LocalDateTime endTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(endMillis), ZoneOffset.UTC);
+            events = eventRepository.findByProductAndTimestampBetween(product, startTime, endTime);
         } else {
-            events = eventRepository.findByProduct(product);
+            events = eventRepository.findByProductOrderByTimestampAsc(product);
         }
 
-        // total active: sum of durations for session_end events
-        long totalActiveMs = events.stream()
-                .filter(e -> e.getAction() != null && e.getAction().equalsIgnoreCase("session_end"))
-                .mapToLong(e -> Optional.ofNullable(e.getDuration()).orElse(0L))
-                .sum();
+        double totalActiveMinutes = 0.0;
+        double totalIdleMinutes = 0.0;
+        LocalDateTime lastStart = null;
 
-        // total idle: sum of durations for idle events
-        long totalIdleMs = events.stream()
-                .filter(e -> e.getAction() != null && e.getAction().equalsIgnoreCase("idle"))
-                .mapToLong(e -> Optional.ofNullable(e.getDuration()).orElse(0L))
-                .sum();
+        for (Event e : events) {
+            if ("session_start".equalsIgnoreCase(e.getEventType())) {
+                lastStart = e.getTimestamp();
+            } else if ("session_end".equalsIgnoreCase(e.getEventType()) && lastStart != null) {
+                Duration duration = Duration.between(lastStart, e.getTimestamp());
+                totalActiveMinutes += duration.toMillis() / 60000.0;
+                lastStart = null;
+            } else if ("idle".equalsIgnoreCase(e.getEventType()) && e.getDuration() != null) {
+                totalIdleMinutes += e.getDuration();
+            }
+        }
 
-        long totalTimeMs = totalActiveMs + totalIdleMs;
-        double idlePercentage = totalTimeMs == 0 ? 0.0 : (totalIdleMs * 100.0) / totalTimeMs;
+        double totalTime = totalActiveMinutes + totalIdleMinutes;
+        double idlePercentage = totalTime == 0 ? 0 : (totalIdleMinutes / totalTime) * 100;
 
-        // feature usage counting: remove session/idle events, keep clicks/features
+        // Collect feature usage (ignore session/idle events)
         Map<String, Long> featureCounts = events.stream()
-            .filter(e -> e.getAction() != null)
-            .filter(e -> {
-                String a = e.getAction().toLowerCase();
-                return !(a.equals("session_start") || a.equals("session_end") || a.equals("idle"));
-            })
-            .collect(Collectors.groupingBy(Event::getAction, Collectors.counting()));
+                .filter(e -> e.getEventType() != null)
+                .filter(e -> {
+                    String type = e.getEventType().toLowerCase();
+                    return !(type.equals("session_start") || type.equals("session_end") || type.equals("idle"));
+                })
+                .collect(Collectors.groupingBy(Event::getEventType, Collectors.counting()));
 
-        // top-N features
         LinkedHashMap<String, Long> sortedFeatures = featureCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue(Comparator.reverseOrder()))
                 .limit(20)
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
                         Map.Entry::getValue,
-                        (a,b) -> a,
+                        (a, b) -> a,
                         LinkedHashMap::new
                 ));
 
@@ -68,9 +74,9 @@ public class MetricsService {
 
         MetricsSummary summary = new MetricsSummary();
         summary.setProduct(product);
-        summary.setTotalActiveMinutes(totalActiveMs / 60000.0);
-        summary.setTotalIdleMinutes(totalIdleMs / 60000.0);
-        summary.setIdlePercentage(Math.round(idlePercentage * 100.0) / 100.0); // round 2 decimals
+        summary.setTotalActiveMinutes(totalActiveMinutes);
+        summary.setTotalIdleMinutes(totalIdleMinutes);
+        summary.setIdlePercentage(Math.round(idlePercentage * 100.0) / 100.0);
         summary.setTopFeatures(sortedFeatures);
         summary.setMostUsedFeature(mostUsedFeature);
         return summary;
