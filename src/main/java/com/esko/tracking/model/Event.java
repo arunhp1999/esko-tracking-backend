@@ -16,10 +16,8 @@ public class Event {
     private String product;
     private String action;
     private Double duration;
-
     private LocalDateTime timestamp = LocalDateTime.now();
 
-    // --- Getters and setters ---
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 

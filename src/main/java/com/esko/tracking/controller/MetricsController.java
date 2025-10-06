@@ -15,15 +15,12 @@ public class MetricsController {
         this.metricsService = metricsService;
     }
 
-    /**
-     * GET /api/metrics/summary?product=MobileApp&start=1633024800000&end=1635616800000
-     * start/end are epoch millis (optional)
-     */
     @GetMapping("/summary")
     public MetricsSummary getSummary(
             @RequestParam String product,
             @RequestParam(required = false) Long start,
-            @RequestParam(required = false) Long end) {
+            @RequestParam(required = false) Long end
+    ) {
         return metricsService.computeSummary(product, start, end);
     }
 }
